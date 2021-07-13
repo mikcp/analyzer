@@ -111,8 +111,7 @@ struct
       begin
         match LibraryFunctions.classify f.vname args with
         | `Unknown "printf" -> ctx.local
-        (* | `Assert (e, _, change) -> assert_fn ctx e change *)
-        | `Assert (e, _, _) -> assert_fn ctx e true (* TODO: make assert() always change *)
+        | `Assert (e, _, change) -> assert_fn ctx e change
         | `Malloc size ->
           (match r with
             | Some lv ->

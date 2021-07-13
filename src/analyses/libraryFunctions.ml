@@ -52,7 +52,7 @@ let classify' fn exps =
     end
   | "assert" ->
     begin match exps with
-      | [e] -> `Assert (e, get_bool "dbg.debug", not (get_bool "dbg.debug"))
+      | [e] -> `Assert (e, get_bool "dbg.debug", get_bool "sem.assert.refine")
       | _ -> M.bailwith "Assert argument mismatch!"
     end
   | "__goblint_check" ->

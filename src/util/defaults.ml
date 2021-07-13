@@ -145,6 +145,7 @@ let _ = ()
       ; reg Semantics "sem.unknown_function.spawn" "true"  "Unknown function call spawns reachable functions"
       ; reg Semantics "sem.unknown_function.invalidate.globals" "true"  "Unknown function call invalidates all globals"
       ; reg Semantics "sem.builtin_unreachable.dead_code" "false"  "__builtin_unreachable is assumed to be dead code"
+      ; reg Semantics "sem.assert.refine" "true" "assert refines state"
 
 (* {4 category [Transformations]} *)
 let _ = ()
