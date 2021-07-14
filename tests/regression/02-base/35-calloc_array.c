@@ -14,6 +14,6 @@ int main(void) {
 
     int z = r[1];
 
-    assert(z == 0); //UNKNOWN
     assert(z != 365);
+    assert(z == 0); //UNKNOWN
 }

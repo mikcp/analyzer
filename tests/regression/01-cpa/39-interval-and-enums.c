@@ -39,15 +39,15 @@ int main () {
   }
 
   assert(a);
-  assert(a!=b); //UNKNOWN
   assert(a<10);
   assert(a<=9);
   assert(!(a<8));
-  assert(a==8); //UNKNOWN
   assert(b>7);
   assert(b>=8);
   assert(!(a>9));
+  assert(a==8); //UNKNOWN
   assert(b==8); //UNKNOWN
+  assert(a!=b); //UNKNOWN
 
   for(x = 0; x < 10; x++){
     assert(x >= 0);

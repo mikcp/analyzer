@@ -190,8 +190,8 @@ int test(void const   *ptr) {
     assert(ptr == 0);
     int f = 7;
   } else {
-    assert(ptr == 1); //UNKNOWN!
     assert(ptr != 0);
+    assert(ptr == 1); //UNKNOWN!
     int f= 38;
   }
 }
