@@ -45,9 +45,9 @@ int main () {
   assert(b>7);
   assert(b>=8);
   assert(!(a>9));
+  assert(a!=b); //UNKNOWN
   assert(a==8); //UNKNOWN
   assert(b==8); //UNKNOWN
-  assert(a!=b); //UNKNOWN
 
   for(x = 0; x < 10; x++){
     assert(x >= 0);
