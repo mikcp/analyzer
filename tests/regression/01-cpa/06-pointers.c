@@ -28,6 +28,7 @@ int main () {
   j = 7;
   assert(*p == 8); // UNKNOWN!
   // TODO: assert refine makes less precise!
+  assert(j == 7);
 
   // writing to a set of addresses
   // p still points to i or j, writing to p should update both:
