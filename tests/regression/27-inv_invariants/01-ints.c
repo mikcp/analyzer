@@ -1,4 +1,4 @@
-// PARAM: --enable ana.int.interval --enable ana.int.wrap_on_signed_overflow
+// PARAM: --enable ana.int.interval --enable ana.int.wrap_on_signed_overflow --disable sem.assert.refine
 // With enabled wrap_on_signed_overflow to assume two's complement representation for signed ints and don't go to top on every signed overflow.
 #include <assert.h>
 
