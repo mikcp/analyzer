@@ -11,8 +11,9 @@ int main () {
     k = 5;
   }
   assert(i == 10); //UNKNOWN
-  assert(k); //UNKNOWN
   // k is currenlty 0 \sqcup 5, if we unfolded the loops it would be 5
+  assert(k); //UNKNOWN
+  // k is now 5 due to assert refine
   assert(j==7);
   return 0;
 }
