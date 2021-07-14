@@ -26,6 +26,7 @@ int main(){
 
   // no information loss between int <-> T*
   assert((int)0 == (int*)0);
+  // TODO: what is this checking? CIL simplifies this to assert(1)
 
   // filtering out the null pointer possibility
   if (x){
