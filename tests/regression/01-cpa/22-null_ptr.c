@@ -33,6 +33,7 @@ int main(){
     assert(*x = 1);
     b = 2;
     assert(*x != 0);
+    // TODO: assert refine makes less precise!
     b = 0;
     assert(*x == 0); // UNKNOWN
     if (x != &b) {
