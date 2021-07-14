@@ -1,3 +1,4 @@
+// PARAM: --disable sem.assert.refine
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
