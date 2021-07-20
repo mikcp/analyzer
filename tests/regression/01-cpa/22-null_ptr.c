@@ -1,4 +1,3 @@
-// PARAM: --disable sem.assert.refine
 #include <stdio.h>
 #include <assert.h>
 
@@ -34,7 +33,6 @@ int main(){
     assert(*x == 1);
     b = 2;
     assert(*x != 0);
-    // TODO: assert refine makes less precise!
     assert(a == 1);
 
     b = 0;

@@ -11,8 +11,7 @@ int main(void) {
 
   // printf?
   printf("Your number is %d", k);
-  assert(k == 4); // UNKNOWN
-  // TODO: prev assert refined to 4 and printf didn't change, update_suite doesn't complain!, regtest does
+  assert(k == 4); // prev assert refined to 4 and printf didn't change
 
   k = 8;
   printf("Your number is %d", k);

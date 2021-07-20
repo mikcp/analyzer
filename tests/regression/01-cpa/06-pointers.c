@@ -27,7 +27,6 @@ int main () {
   // if j -> 7 and i -> 8, we don't know:
   j = 7;
   assert(*p == 8); // UNKNOWN!
-  // TODO: assert refine makes less precise!
   assert(j == 7);
 
   // writing to a set of addresses
