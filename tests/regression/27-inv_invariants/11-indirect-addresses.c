@@ -17,8 +17,8 @@ int main() {
 
   assert(a == 1);
   if (*x > 1) { // invariant rules out x == &a
-    assert(x == &b); // TODO
     assert(*x == 2); // TODO
+    assert(x == &b); // TODO
   }
   return 0;
 }
