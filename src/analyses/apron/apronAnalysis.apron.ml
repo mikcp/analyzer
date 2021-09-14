@@ -284,8 +284,11 @@ struct
     if not change then
       st
     else
-      (* TODO: globals wrapper like branch *)
-      let res = AD.assert_inv st.oct e false in
+      let res = assign_from_globals_wrapper (Analyses.ask_of_ctx ctx) ctx.global st e (fun oct' e' ->
+          (* not an assign, but must remove g#in-s still *)
+          AD.assert_inv oct' e' false
+        )
+      in
       if AD.is_bot_env res then raise Deadcode;
       {st with oct = res}
 
