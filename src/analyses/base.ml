@@ -834,10 +834,6 @@ struct
           M.debug "Failed evaluating %s to lvalue" str; do_offs AD.unknown_ptr ofs
       end
 
-  (* run eval_rv from above and keep a result that is bottom *)
-  (* this is needed for global variables *)
-  let eval_rv_keep_bot = eval_rv
-
   (* run eval_rv from above, but change bot to top to be sound for programs with undefined behavior. *)
   (* Previously we only gave sound results for programs without undefined behavior, so yielding bot for accessing an uninitialized array was considered ok. Now only [invariant] can yield bot/Deadcode if the condition is known to be false but evaluating an expression should not be bot. *)
   let eval_rv (a: Q.ask) (gs:glob_fun) (st: store) (exp:exp): value =
@@ -1106,6 +1102,7 @@ struct
       in
       let update_offset old_value =
         let new_value = VD.update_offset a old_value offs value lval_raw ((Var x), cil_offset) t in
+        if M.tracing then M.trace "setosek" "update_offset old=%a new=%a\n" VD.pretty old_value VD.pretty new_value;
         if WeakUpdates.mem x st.weak then
           VD.join old_value new_value
         else if invariant then
@@ -1709,7 +1706,8 @@ struct
       );
       match lval with (* this section ensure global variables contain bottom values of the proper type before setting them  *)
       | (Var v, _) when AD.is_definite lval_val && v.vglob ->
-        let current_val = eval_rv_keep_bot (Analyses.ask_of_ctx ctx) ctx.global ctx.local (Lval (Var v, NoOffset)) in
+        (* instead of eval_rv (which queries others), just get value of global according to base directly *)
+        let current_val = get (Analyses.ask_of_ctx ctx) ctx.global ctx.local (eval_lv (Analyses.ask_of_ctx ctx) ctx.global ctx.local (Var v, NoOffset)) None in (* this lval is with NoOffset! *)
         (match current_val with
         | `Bot -> (* current value is VD `Bot *)
           (match Addr.to_var_offset (AD.choose lval_val) with
