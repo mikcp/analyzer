@@ -851,7 +851,7 @@ struct
     | `Bot (* if uninitialized (float?) array element, like eval_rv wrapper *)
     | exception (IntDomain.ArithmeticOnIntegerBot _) (* like eval_rv wrapper *)
     | `Top -> (* if float or unknown_exp *)
-      Queries.ID.top_of (Cilfacade.get_ikind (typeOf e)) (* TODO: get_ikind_exp *)
+      Queries.ID.top_of (Cilfacade.get_ikind_exp e)
     (* | v      -> M.warn ("Query function answered " ^ (VD.show v)); Queries.Result.top q *)
     | v      -> M.debug "Query function answered %a" VD.pretty v; Queries.ID.bot ()
     in
