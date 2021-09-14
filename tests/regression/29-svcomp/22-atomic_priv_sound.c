@@ -11,7 +11,7 @@ void *t_fun(void *arg) {
   __VERIFIER_atomic_begin();
   assert(myglobal == 5); // TODO
   myglobal++;
-  assert(myglobal == 6); // TODO
+  assert(myglobal == 6); // by assert refine
   __VERIFIER_atomic_end();
   return NULL;
 }
