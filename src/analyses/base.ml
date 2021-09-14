@@ -1900,6 +1900,13 @@ struct
     in
     (* Assign parameters to arguments *)
     let pa = GU.zip fundec.sformals vals in
+    let pa =
+      if thread then (
+        (* Cast thread function argument if not using void* *)
+        List.map (fun (f, v) -> (f, VD.cast f.vtype v)) pa
+      ) else
+        pa
+    in
     let new_cpa = CPA.add_list pa st'.cpa in
     (* List of reachable variables *)
     let reachable = List.concat (List.map AD.to_var_may (reachable_vars (Analyses.ask_of_ctx ctx) (get_ptrs vals) ctx.global st)) in
