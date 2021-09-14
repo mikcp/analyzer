@@ -1,4 +1,4 @@
-// PARAM: --enable ana.int.interval --enable exp.partition-arrays.enabled --set ana.activated "['base', 'mallocWrapper','assert']"
+// PARAM: --enable ana.int.interval --enable exp.partition-arrays.enabled --set ana.activated "['base', 'mallocWrapper','assert']" --set exp.privatization none
 int main(void) {
     // Shifting by a negative number is UB, but we should still not crash on it, but go to top instead
     int v = -1;

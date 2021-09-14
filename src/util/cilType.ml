@@ -10,8 +10,38 @@ end
 module Std =
 struct
   include Printable.Std
+end
 
-  let pretty_diff () (_, _) = nil
+module Location:
+sig
+  include S with type t = location
+  val pp: Format.formatter -> t -> unit (* for Messages *)
+end =
+struct
+  include Std
+
+  type t = location
+
+  let name () = "location"
+
+  (* Identity *)
+  let compare x y = Cil.compareLoc x y
+  let equal x y = compare x y = 0
+  let hash x = Hashtbl.hash x (* struct of primitives, so this is fine *)
+
+  (* Output *)
+  let show x =
+    (* TODO: add special output for locUnknown *)
+    x.file ^ ":" ^ string_of_int x.line ^ ":" ^ string_of_int x.column
+
+  let pretty () x = Pretty.text (show x)
+  let printXml f x = BatPrintf.fprintf f "<value>\n<data>\n%s\n</data>\n</value>\n" (XmlUtil.escape (show x))
+  let to_yojson x = `Assoc [
+      ("file", `String x.file);
+      ("line", `Int x.line);
+      ("column", `Int x.column);
+    ]
+  let pp fmt x = Format.fprintf fmt "%s" (show x) (* for Messages *)
 end
 
 module Varinfo:

@@ -1,6 +1,9 @@
 (** Abstract Domains for integers. These are domains that support the C
   * operations on integer values. *)
 
+val should_wrap: Cil.ikind -> bool
+val should_ignore_overflow: Cil.ikind -> bool
+
 module type Arith =
 sig
   type t
@@ -226,6 +229,8 @@ sig
     * should follow C: [of_bool true = of_int 1] and [of_bool false = of_int 0]. *)
 
   val of_interval: Cil.ikind -> int_t * int_t -> t
+
+  val of_congruence: Cil.ikind -> int_t * int_t -> t
 end
 (** Interface of IntDomain implementations that do not take ikinds for arithmetic operations yet.
    TODO: Should be ported to S in the future. *)
@@ -257,6 +262,7 @@ sig
     * should follow C: [of_bool true = of_int 1] and [of_bool false = of_int 0]. *)
 
   val of_interval: Cil.ikind -> int_t * int_t -> t
+  val of_congruence: Cil.ikind -> int_t * int_t -> t
   val is_top_of: Cil.ikind -> t -> bool
   val invariant_ikind : Invariant.context -> Cil.ikind -> t -> Invariant.t
 
@@ -283,6 +289,8 @@ sig
     * should follow C: [of_bool true = of_int 1] and [of_bool false = of_int 0]. *)
 
   val of_interval: Cil.ikind -> int_t * int_t -> t
+
+  val of_congruence: Cil.ikind -> int_t * int_t -> t
 
   val starting   : Cil.ikind -> int_t -> t
   val ending     : Cil.ikind -> int_t -> t

@@ -1,4 +1,4 @@
-// PARAM: --sets solver td3 --enable ana.int.interval --enable exp.partition-arrays.enabled  --set ana.activated "['base','threadid','threadflag','escape','expRelation','octagon','mallocWrapper','assert']" --disable sem.assert.refine
+// PARAM: --set solver td3 --enable ana.int.interval --enable exp.partition-arrays.enabled  --set ana.activated "['base','threadid','threadflag','escape','expRelation','octagon','mallocWrapper','assert']" --set exp.privatization none --disable sem.assert.refine
 void main(void) {
   example1();
   example2();

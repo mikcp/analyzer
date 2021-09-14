@@ -2,7 +2,6 @@ open GobConfig
 open Pretty
 
 module GU = Goblintutil
-module JB = Json
 module M = Messages
 module BI = IntOps.BigIntOps
 
@@ -13,6 +12,14 @@ exception IncompatibleIKinds of string
 exception Unknown
 exception Error
 exception ArithmeticOnIntegerBot of string
+
+(** Whether for a given ikind, we should compute with wrap-around arithmetic.
+  *  Always for unsigned types, for signed types if 'sem.int.signed_overflow' is 'assume_wraparound'  *)
+let should_wrap ik = not (Cil.isSigned ik) || get_string "sem.int.signed_overflow" = "assume_wraparound"
+
+(** Whether for a given ikind, we should assume there are no overflows.
+  * Always false for unsigned types, true for signed types if 'sem.int.signed_overflow' is 'assume_none'  *)
+let should_ignore_overflow ik = Cil.isSigned ik && get_string "sem.int.signed_overflow" = "assume_none"
 
 module type Arith =
 sig
@@ -111,6 +118,7 @@ sig
   val of_int: int_t -> t
   val of_bool: bool -> t
   val of_interval: Cil.ikind -> int_t * int_t -> t
+  val of_congruence: Cil.ikind -> int_t * int_t -> t
 end
 (** Interface of IntDomain implementations that do not take ikinds for arithmetic operations yet.
    TODO: Should be ported to S in the future. *)
@@ -136,6 +144,7 @@ sig
   val of_int: Cil.ikind -> int_t -> t
   val of_bool: Cil.ikind -> bool -> t
   val of_interval: Cil.ikind -> int_t * int_t -> t
+  val of_congruence: Cil.ikind -> int_t * int_t -> t
   val is_top_of: Cil.ikind -> t -> bool
   val invariant_ikind : Invariant.context -> Cil.ikind -> t -> Invariant.t
 
@@ -154,6 +163,7 @@ sig
   val of_int: Cil.ikind -> int_t -> t
   val of_bool: Cil.ikind -> bool -> t
   val of_interval: Cil.ikind -> int_t * int_t -> t
+  val of_congruence: Cil.ikind -> int_t * int_t -> t
 
   val starting   : Cil.ikind -> int_t -> t
   val ending     : Cil.ikind -> int_t -> t
@@ -221,6 +231,11 @@ struct
   let of_interval ik (l, u) =
     try
       Old.of_interval ik (BI.to_int64 l, BI.to_int64 u)
+    with
+      Failure _ -> top_of ik
+  let of_congruence ik (c, m) =
+    try
+      Old.of_congruence ik (BI.to_int64 c, BI.to_int64 m)
     with
       Failure _ -> top_of ik
 
@@ -319,6 +334,7 @@ struct
   let is_excl_list x = I.is_excl_list x.v
   let to_incl_list x = I.to_incl_list x.v
   let of_interval ikind (lb,ub) = {v = I.of_interval ikind (lb,ub); ikind}
+  let of_congruence ikind (c,m) = {v = I.of_congruence ikind (c,m); ikind}
   let starting ikind i = {v = I.starting ikind i; ikind}
   let ending ikind i = {v = I.ending ikind i; ikind}
   let maximal x = I.maximal x.v
@@ -412,7 +428,7 @@ module Size = struct (* size in bits as int, range as int64 *)
       else if lt_big_int y a then add_big_int y c
       else y
     in
-    M.tracel "cast_int" "Cast %s to range [%s, %s] (%s) = %s (%s in int64)\n" (string_of_big_int x) (string_of_big_int a) (string_of_big_int b) (string_of_big_int c) (string_of_big_int y) (if is_int64_big_int y then "fits" else "does not fit");
+    if M.tracing then M.tracel "cast_int" "Cast %s to range [%s, %s] (%s) = %s (%s in int64)\n" (string_of_big_int x) (string_of_big_int a) (string_of_big_int b) (string_of_big_int c) (string_of_big_int y) (if is_int64_big_int y then "fits" else "does not fit");
     y
   let cast t x =
     let x' = big_int_of_int64 x in
@@ -460,6 +476,7 @@ module StdTop (B: sig type t val top_of: Cil.ikind -> t end) = struct
   let is_excl_list    x = false
   let to_incl_list    x = None
   let of_interval  ik x = top_of ik
+  let of_congruence ik x = top_of ik
   let starting     ik x = top_of ik
   let ending       ik x = top_of ik
   let maximal         x = None
@@ -474,7 +491,7 @@ module Std (B: sig
     val show: t -> string
     val equal: t -> t -> bool
   end) = struct
-  include Printable.StdPolyCompare
+  include Printable.Std
   let name = B.name (* overwrite the one from Printable.Std *)
   open B
   let hash = Hashtbl.hash
@@ -496,7 +513,7 @@ module IntervalFunctor(Ints_t : IntOps.IntOps): S with type int_t = Ints_t.t and
 struct
   let name () = "intervals"
   type int_t = Ints_t.t
-  type t = (Ints_t.t * Ints_t.t) option [@@deriving eq]
+  type t = (Ints_t.t * Ints_t.t) option [@@deriving eq, ord]
 
   let min_int ik = Ints_t.of_bigint @@ fst @@ Size.range_big_int ik
   let max_int ik = Ints_t.of_bigint @@ snd @@ Size.range_big_int ik
@@ -519,12 +536,36 @@ struct
       if a = b && b = i then `Eq else if Ints_t.compare a i <= 0 && Ints_t.compare i b <=0 then `Top else `Neq
 
   let set_overflow_flag ik =
-    if Cil.isSigned ik && !GU.in_verifying_stage then
-      Goblintutil.did_overflow := true
+    if Cil.isSigned ik && !GU.in_verifying_stage then (
+      Goblintutil.did_overflow := true;
+      M.warn ~category:M.Category.Integer.overflow ~tags:[M.Tag.CWE 190] "Integer overflow"
+    )
 
   let norm ik = function None -> None | Some (x,y) ->
     if Ints_t.compare x y > 0 then None
-    else if Ints_t.compare (min_int ik) x > 0 || Ints_t.compare (max_int ik) y < 0 then (set_overflow_flag ik; top_of ik)
+    else if Ints_t.compare (min_int ik) x > 0 || Ints_t.compare (max_int ik) y < 0 then (
+      set_overflow_flag ik;
+      if should_wrap ik then
+        (* We can only soundly wrap if at most one overflow occurred, otherwise the minimal and maximal values of the interval *)
+        (* on Z will not safely contain the minimal and maximal elements after the cast *)
+        let diff = Ints_t.abs (Ints_t.sub (max_int ik) (min_int ik)) in
+        let resdiff = Ints_t.abs (Ints_t.sub y x) in
+        if Ints_t.compare resdiff diff > 0 then
+          top_of ik
+        else
+          let l = Ints_t.of_bigint @@ Size.cast_big_int ik (Ints_t.to_bigint x) in
+          let u = Ints_t.of_bigint @@ Size.cast_big_int ik (Ints_t.to_bigint y) in
+          if Ints_t.compare l u <= 0 then
+            Some (l, u)
+          else
+            (* Interval that wraps around (begins to the right of its end). We can not represent such intervals *)
+            top_of ik
+      else if should_ignore_overflow ik then
+        let tl, tu = BatOption.get @@ top_of ik in
+        Some (max tl x, min tu y)
+      else
+        top_of ik
+    )
     else Some (x,y)
 
   let leq (x:t) (y:t) =
@@ -805,12 +846,6 @@ struct
     QCheck.(set_shrink shrink @@ set_print show @@ map (*~rev:BatOption.get*) (of_interval ik) pair_arb)
   let relift x = x
 
-  let abs x =
-    if Ints_t.compare x Ints_t.zero < 0 then
-      Ints_t.neg x
-    else
-      x
-
   let modulo n k =
     let result = Ints_t.rem n k in
     if Ints_t.compare result Ints_t.zero >= 0 then result
@@ -823,10 +858,12 @@ struct
       else if Ints_t.equal m Ints_t.zero then
         Some (c, c)
       else
-        let rcx = if Ints_t.equal x (min_int ik) then x else
-            Ints_t.add x (modulo (Ints_t.sub c x) (abs(m))) in
-        let lcy = if Ints_t.equal y (max_int ik) then y else
-            Ints_t.sub y (modulo (Ints_t.sub y c) (abs(m))) in
+        let rcx =
+          if Ints_t.equal x (min_int ik) then x else
+            Ints_t.add x (modulo (Ints_t.sub c x) (Ints_t.abs m)) in
+        let lcy =
+          if Ints_t.equal y (max_int ik) then y else
+            Ints_t.sub y (modulo (Ints_t.sub y c) (Ints_t.abs m)) in
         if Ints_t.compare rcx lcy > 0 then None
         else if Ints_t.equal rcx lcy then norm ik @@ Some (rcx, rcx)
         else norm ik @@ Some (rcx, lcy)
@@ -878,7 +915,7 @@ module Integers(Ints_t : IntOps.IntOps): IkindUnawareS with type t = Ints_t.t an
 struct
   include Printable.Std
   let name () = "integers"
-  type t = Ints_t.t [@@deriving eq]
+  type t = Ints_t.t [@@deriving eq, ord]
   type int_t = Ints_t.t
   let top () = raise Unknown
   let bot () = raise Error
@@ -985,6 +1022,7 @@ struct
   let is_excl_list x = false
   let to_incl_list x = None
   let of_interval ik x = top_of ik
+  let of_congruence ik x = top_of ik
   let starting     ikind x = top_of ikind
   let ending       ikind x = top_of ikind
   let maximal      x = None
@@ -1141,7 +1179,7 @@ struct
     | `Excluded of S.t * R.t
     | `Definite of BigInt.t
     | `Bot
-  ] [@@deriving eq]
+  ] [@@deriving eq, ord]
   type int_t = BigInt.t
   let name () = "def_exc"
 
@@ -1171,6 +1209,28 @@ struct
 
   include Std (struct type nonrec t = t let name = name let top_of = top_of let bot_of = bot_of let show = show let equal = equal end)
   (* FIXME: poly compare? *)
+
+  let max_of_range r = Size.max_from_bit_range (R.maximal r)
+  let min_of_range r = Size.min_from_bit_range (R.minimal r)
+
+  let maximal = function
+    | `Definite x -> Some x
+    | `Excluded (s,r) -> max_of_range r
+    | `Bot -> None
+
+  let minimal = function
+    | `Definite x -> Some x
+    | `Excluded (s,r) -> min_of_range r
+    | `Bot -> None
+
+  let in_range r i =
+    match min_of_range r with
+    | None when BI.compare i BI.zero < 0 -> true
+    | Some l when BI.compare i BI.zero < 0  -> BI.compare l i <= 0
+    | _ ->
+      match max_of_range r with
+      | None -> true
+      | Some u -> i <= u
 
   let is_top x = x = top ()
 
@@ -1203,7 +1263,6 @@ struct
      * r might be larger than the possible range of this type; the range of the returned `Excluded set will be within the bounds of the ikind.
      *)
     let norm ik v =
-      let should_wrap ik = not (Cil.isSigned ik) || GobConfig.get_bool "ana.int.wrap_on_signed_overflow" in
       match v with
       | `Excluded (s, r) ->
         let possibly_overflowed = not (R.leq r (size ik)) in
@@ -1211,8 +1270,15 @@ struct
         if not possibly_overflowed then (
           v
         )
+        (* Else, if an overflow might have occurred but we should just ignore it *)
+        else if should_ignore_overflow ik then (
+          let r = size ik in
+          (* filter out excluded elements that are not in the range *)
+          let mapped_excl = S.filter (in_range r) s in
+          `Excluded (mapped_excl, r)
+        )
         (* Else, if an overflow occurred that we should not treat with wrap-around, go to top *)
-        else if not (should_wrap ik) then(
+        else if not (should_wrap ik) then (
           top_of ik
         ) else (
           (* Else an overflow occurred that we should treat with wrap-around *)
@@ -1226,34 +1292,18 @@ struct
         (* Perform a wrap-around for unsigned values and for signed values (if configured). *)
         if should_wrap ik then (
           cast_to ik v
-        ) else if BigInt.compare min x <= 0 && BigInt.compare x max <= 0 then (
+        )
+        else if BigInt.compare min x <= 0 && BigInt.compare x max <= 0 then (
           v
-        ) else (
+        )
+        else if should_ignore_overflow ik then (
+          M.warn ~category:M.Category.Integer.overflow "DefExc: Value was outside of range, indicating overflow, but 'sem.int.signed_overflow' is 'assume_none' -> Returned Bot";
+          `Bot
+        )
+        else (
           top_of ik
         )
       | `Bot -> `Bot
-
-  let max_of_range r = Size.max_from_bit_range (R.maximal r)
-  let min_of_range r = Size.min_from_bit_range (R.minimal r)
-
-  let maximal = function
-    | `Definite x -> Some x
-    | `Excluded (s,r) -> max_of_range r
-    | `Bot -> None
-
-  let minimal = function
-    | `Definite x -> Some x
-    | `Excluded (s,r) -> min_of_range r
-    | `Bot -> None
-
-  let in_range r i =
-    match min_of_range r with
-    | None when BI.compare i BI.zero < 0 -> true
-    | Some l when BI.compare i BI.zero < 0  -> BI.compare l i <= 0
-    | _ ->
-      match max_of_range r with
-      | None -> true
-      | Some u -> i <= u
 
   let leq x y = match (x,y) with
     (* `Bot <= x is always true *)
@@ -1576,7 +1626,7 @@ end
 module MakeBooleans (N: BooleansNames) =
 struct
   type int_t = IntOps.Int64Ops.t
-  type t = bool [@@deriving eq, to_yojson]
+  type t = bool [@@deriving eq, ord, to_yojson]
   let name () = "booleans"
   let top () = true
   let bot () = false
@@ -1681,8 +1731,21 @@ module Enums : S with type int_t = BigInt.t = struct
     in
     match v with
     | Inc xs when ISet.for_all value_in_ikind xs -> v
+    | Inc xs ->
+      if should_wrap ikind then
+        Inc (ISet.map (BigInt.cast_to ikind) xs)
+      else if should_ignore_overflow ikind then
+        Inc (ISet.filter value_in_ikind xs)
+      else
+        top_of ikind
     | Exc (xs, r) when ISet.for_all value_in_ikind xs && range_in_ikind r -> v
-    | _ -> top_of ikind
+    | Exc (xs, r) ->
+      if should_wrap ikind then
+        Exc (ISet.map (BigInt.cast_to ikind) xs, size ikind)
+      else if should_ignore_overflow ikind then
+        Exc (ISet.filter value_in_ikind xs, size ikind)
+      else
+        top_of ikind
 
   let equal_to i = function
     | Inc x ->
@@ -1949,7 +2012,7 @@ struct
   type int_t = Ints_t.t
 
   (* represents congruence class of c mod m, None is bot *)
-  type t = (Ints_t.t * Ints_t.t) option
+  type t = (Ints_t.t * Ints_t.t) option [@@deriving eq, ord]
 
   let ( *: ) = Ints_t.mul
   let (+:) = Ints_t.add
@@ -1965,18 +2028,22 @@ struct
   let ( |: ) a b =
     if a =: Ints_t.zero then false else (b %: a) =: Ints_t.zero
 
-  let rec gcd x y =
-    if y =: Ints_t.zero then x else gcd y (x %: y)
-  let abs x =
-    if x <: Ints_t.zero then
-      Ints_t.neg x
-    else
-      x
-
-  let normalize x =
+  let normalize ik x =
     match x with
     | None -> None
-    | Some (c, m) -> if m =: Ints_t.zero then Some (c, m) else Some (c %: (abs m), (abs m))
+    | Some (c, m) ->
+      if m =: Ints_t.zero then
+        if should_wrap ik then
+          Some (BigInt.cast_to ik c, m)
+        else
+          Some (c, m)
+      else
+        let m' = Ints_t.abs m in
+        let c' = c %: m' in
+        if c' <: Ints_t.zero then
+          Some (c' +: m', m')
+        else
+          Some (c' %: m', m')
 
   let min_int ik = Ints_t.of_bigint @@ fst @@ Size.range_big_int ik
 
@@ -1997,11 +2064,6 @@ struct
       let c = if a = "" || b = "" then "" else "+" in
       a^c^b
 
-  let equal a b = match (normalize a), (normalize b) with
-    | None, None -> true
-    | Some (a, b), Some (c, d) -> a =: c && b =: d
-    | _, _ -> false
-
   include Std (struct type nonrec t = t let name = name let top_of = top_of let bot_of = bot_of let show = show let equal = equal end)
 
   let equal_to i = function
@@ -2015,7 +2077,7 @@ struct
     | Some _, None -> false
     | Some (c1,m1), Some (c2,m2) when m2 =: Ints_t.zero && m1 =: Ints_t.zero -> c1 =: c2
     | Some (c1,m1), Some (c2,m2) when m2 =: Ints_t.zero -> c1 =: c2 && m1 =: Ints_t.zero
-    | Some (c1,m1), Some (c2,m2) -> m2 |: (gcd (c1 -: c2) m1)
+    | Some (c1,m1), Some (c2,m2) -> m2 |: (Ints_t.gcd (c1 -: c2) m1)
      (* Typo in original equation of P. Granger (m2 instead of m1): gcd (c1 -: c2) m2
      Reference: https://doi.org/10.1080/00207168908803778 Page 171 corollary 3.3*)
 
@@ -2028,8 +2090,8 @@ struct
     match x, y with
     | None, z | z, None -> z
     | Some (c1,m1), Some (c2,m2) ->
-      let m3 = gcd m1 (gcd m2 (c1 -: c2)) in
-      normalize (Some (c1, m3))
+      let m3 = Ints_t.gcd m1 (Ints_t.gcd m2 (c1 -: c2)) in
+      normalize ik (Some (c1, m3))
 
   let join ik (x:t) y =
     let res = join ik x y in
@@ -2053,9 +2115,9 @@ struct
     | Some (c1, m1), Some (c2, m2) when m1 =: Ints_t.zero && m2 =: Ints_t.zero -> if c1 =: c2 then Some (c1, Ints_t.zero) else None
     | Some (c1, m1), Some (c2, m2) when m1 =: Ints_t.zero -> simple_case c1 c2 m2
     | Some (c1, m1), Some (c2, m2) when m2 =: Ints_t.zero -> simple_case c2 c1 m1
-    | Some (c1, m1), Some (c2, m2) when (gcd m1 m2) |: (c1 -: c2) ->
+    | Some (c1, m1), Some (c2, m2) when (Ints_t.gcd m1 m2) |: (c1 -: c2) ->
       let (c, m) = congruence_series m1 (c2 -: c1 ) m2 in
-      normalize (Some(c1 +: (m1 *: (m /: c)), m1 *: (m2 /: c)))
+      normalize ik (Some(c1 +: (m1 *: (m /: c)), m1 *: (m2 /: c)))
     | _  -> None
 
   let meet ik x y =
@@ -2082,6 +2144,8 @@ struct
   let starting ik n = top()
 
   let ending = starting
+
+  let of_congruence ik (c,m) = normalize ik @@ Some(c,m)
 
   let maximal t = match t with
     | Some (x, y) when y =: Ints_t.zero -> Some x
@@ -2166,7 +2230,7 @@ struct
   let shift_left ik x y =
     (* Naive primality test *)
     let is_prime n =
-      let n = abs n in
+      let n = Ints_t.abs n in
       let rec is_prime' d =
         (d *: d >: n) || ((not ((n %: d) =: Ints_t.zero)) && (is_prime' [@tailcall]) (d +: Ints_t.one))
       in
@@ -2183,9 +2247,9 @@ struct
       else
         let x = (Ints_t.bitand (max_int ik) (Ints_t.shift_left Ints_t.one (Ints_t.to_int c'))) in   (* 2^c' *)
         if is_prime (m' +: Ints_t.one) then
-          Some (x *: c, gcd (x *: m) ((c *: x) *: (m' +: Ints_t.one)))
+          Some (x *: c, Ints_t.gcd (x *: m) ((c *: x) *: (m' +: Ints_t.one)))
         else
-          Some (x *: c, gcd (x *: m) (c *: x))
+          Some (x *: c, Ints_t.gcd (x *: m) (c *: x))
 
   let shift_left ik x y =
     let res = shift_left ik x y in
@@ -2196,9 +2260,9 @@ struct
     match x, y with
     | None, None -> bot ()
     | None, _ | _, None ->
-       raise (ArithmeticOnIntegerBot (Printf.sprintf "%s op %s" (show x) (show y)))
+      raise (ArithmeticOnIntegerBot (Printf.sprintf "%s op %s" (show x) (show y)))
     | Some (c1, m1), Some (c2, m2) when no_ov ->
-       Some (c1 *: c2, gcd (c1 *: m2) (gcd (m1 *: c2) (m1 *: m2)))
+      Some (c1 *: c2, Ints_t.gcd (c1 *: m2) (Ints_t.gcd (m1 *: c2) (m1 *: m2)))
     | Some (c1, m1), Some (c2, m2)
          when m1 =: Ints_t.zero && m2 =: Ints_t.zero && not (Cil.isSigned ik) ->
        Some((c1 *: c2) %: ((max_int ik) +: Ints_t.one), Ints_t.zero)
@@ -2220,7 +2284,7 @@ struct
     | None, None -> bot ()
     | None, _ | _, None ->
        raise (ArithmeticOnIntegerBot (Printf.sprintf "%s op %s" (show x) (show y)))
-    | Some (c1, m1), Some (c2, m2) when no_ov -> normalize (Some (c1 +: c2, gcd m1 m2))
+    | Some (c1, m1), Some (c2, m2) when no_ov -> normalize ik (Some (c1 +: c2, Ints_t.gcd m1 m2))
     | Some (c1, m1), Some (c2, m2)
          when m1 =: Ints_t.zero && m2 =: Ints_t.zero && not (Cil.isSigned ik) ->
        Some((c1 +: c2) %: ((max_int ik) +: Ints_t.one), Ints_t.zero)
@@ -2268,8 +2332,14 @@ struct
     match x, y with
     | None, None -> bot()
     | None, _ | _, None -> raise (ArithmeticOnIntegerBot (Printf.sprintf "%s op %s" (show x) (show y)))
-    | Some (c1, m1), Some(c2, m2) -> (if m2 =: Ints_t.zero then (if (c2 |: m1) && (c2 |: c1) then zero else normalize(Some(c1, (gcd m1 c2))))
-        else normalize (Some(c1, gcd m1 (gcd c2 m2))))
+    | Some (c1, m1), Some(c2, m2) ->
+      if m2 =: Ints_t.zero then
+        if (c2 |: m1) then
+          Some(c1 %: c2,Ints_t.zero)
+        else
+          normalize ik (Some(c1, (Ints_t.gcd m1 c2)))
+      else
+        normalize ik (Some(c1, Ints_t.gcd m1 (Ints_t.gcd c2 m2)))
 
   let rem ik x y = let res = rem ik x y in
     if M.tracing then  M.trace "congruence" "rem : %a %a -> %a \n" pretty x pretty y pretty res;
@@ -2359,7 +2429,7 @@ struct
     let bot_arb = make ~print:show (Gen.return (bot ())) in
     let int_cong_arb = pair int_arb (make (Gen.return Ints_t.zero)) in
     let cong_arb = pair int_arb int_arb in
-    let of_pair ik p = normalize (Some p) in
+    let of_pair ik p = normalize ik (Some p) in
     oneof
       ((set_print show @@ map (of_pair ik) cong_arb)::
          (set_print show @@ map (of_pair ik) int_cong_arb)::
@@ -2370,14 +2440,14 @@ struct
   let refine_with_interval ik (cong : t) (intv : (int_t * int_t ) option) : t =
     match intv, cong with
     | Some (x, y), Some (c, m) ->
-       if m =: Ints_t.zero then
-         if (c <: x || c >: y) then None else Some (c, Ints_t.zero)
-       else
-         let rcx = x +: ((c -: x) %: abs(m)) in
-         let lcy = y -: ((y -: c) %: abs(m)) in
-         if rcx >: lcy then None
-         else if rcx =: lcy then Some (rcx, Ints_t.zero)
-         else cong
+      if m =: Ints_t.zero then
+        if (c <: x || c >: y) then None else Some (c, Ints_t.zero)
+      else
+        let rcx = x +: ((c -: x) %: Ints_t.abs m) in
+        let lcy = y -: ((y -: c) %: Ints_t.abs m) in
+        if rcx >: lcy then None
+        else if rcx =: lcy then Some (rcx, Ints_t.zero)
+        else cong
     | _ -> None
 
   let refine_with_interval ik (cong : t) (intv : (int_t * int_t) option) : t =
@@ -2449,7 +2519,7 @@ module IntDomTupleImpl = struct
   let starting ik = create2 { fi2 = fun (type a) (module I:S with type t = a and type int_t = int_t) -> I.starting ik }
   let ending ik = create2 { fi2 = fun (type a) (module I:S with type t = a and type int_t = int_t) -> I.ending ik }
   let of_interval ik = create2 { fi2 = fun (type a) (module I:S with type t = a and type int_t = int_t) -> I.of_interval ik }
-
+  let of_congruence ik = create2 { fi2 = fun (type a) (module I:S with type t = a and type int_t = int_t) -> I.of_congruence ik }
 
   let refine_with_congruence ik ((a, b, c, d) : t) (cong : (int_t * int_t) option) : t=
     let opt f a =
@@ -2580,7 +2650,7 @@ module IntDomTupleImpl = struct
     ); !dt
 
   let no_overflow ik r =
-    if GobConfig.get_bool "ana.int.congruence_no_overflow" && Cil.isSigned ik then true
+    if should_ignore_overflow ik then true
     else let ika, ikb = Size.range_big_int ik in
       match I2.minimal r, I2.maximal r with
       | Some ra, Some rb -> BI.compare ika ra < 0 || BI.compare rb ikb < 0
@@ -2591,7 +2661,7 @@ module IntDomTupleImpl = struct
     let map f ?no_ov = function Some x -> Some (f ?no_ov x) | _ -> None  in
     let intv = map (r.f1 (module I2)) b in
     let no_ov =
-      match intv with Some i -> no_overflow ik i | _ -> GobConfig.get_bool "ana.int.congruence_no_overflow" && Cil.isSigned ik
+      match intv with Some i -> no_overflow ik i | _ -> should_ignore_overflow ik
     in refine ik
     ( map (r.f1 (module I1)) a
     , intv
@@ -2602,7 +2672,7 @@ module IntDomTupleImpl = struct
   let map2ovc ik r (xa, xb, xc, xd) (ya, yb, yc, yd) =
     let intv = opt_map2 (r.f2 (module I2)) xb yb in
     let no_ov =
-      match intv with Some i -> no_overflow ik i | _ -> GobConfig.get_bool "ana.int.congruence_no_overflow" && Cil.isSigned ik
+      match intv with Some i -> no_overflow ik i | _ -> should_ignore_overflow ik
     in
     refine ik
       ( opt_map2 (r.f2 (module I1)) xa ya
@@ -2647,7 +2717,7 @@ module IntDomTupleImpl = struct
   let same show x = let xs = to_list_some x in let us = List.unique xs in let n = List.length us in
     if n = 1 then Some (List.hd xs)
     else (
-      if n>1 then Messages.warn_all @@ "Inconsistent state! "^String.concat "," @@ List.map show us; (* do not want to abort, but we need some unsound category *)
+      if n>1 then Messages.warn "Inconsistent state! %a" (Pretty.docList ~sep:(Pretty.text ",") (Pretty.text % show)) us; (* do not want to abort, but we need some unsound category *)
       None
     )
   let to_int = same BI.to_string % mapp2 { fp2 = fun (type a) (module I:S with type t = a and type int_t = int_t) -> I.to_int }

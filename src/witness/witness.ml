@@ -127,7 +127,7 @@ let write_file filename (module Task:Task) (module TaskResult:WitnessTaskResult)
   GML.write_metadata g "sourcecodelang" "C";
   GML.write_metadata g "producer" (Printf.sprintf "Goblint (%s)" Version.goblint);
   GML.write_metadata g "specification" (Svcomp.Specification.to_string Task.specification);
-  let programfile = (getLoc (N.cfgnode main_entry)).file in
+  let programfile = (Node.location (N.cfgnode main_entry)).file in
   GML.write_metadata g "programfile" programfile;
   let programhash =
     (* TODO: calculate SHA-256 hash without external process *)
@@ -154,7 +154,7 @@ let write_file filename (module Task:Task) (module TaskResult:WitnessTaskResult)
             | Statement _, Some i ->
               let i = InvariantCil.exp_replace_original_name i in
               [("invariant", Pretty.sprint 800 (Cil.dn_exp () i));
-              ("invariant.scope", (getFun cfgnode).svar.vname)]
+              ("invariant.scope", (Node.find_fundec cfgnode).svar.vname)]
             | _ ->
               (* ignore entry and return invariants, variables of wrong scopes *)
               (* TODO: don't? fix scopes? *)
@@ -198,7 +198,7 @@ let write_file filename (module Task:Task) (module TaskResult:WitnessTaskResult)
              else
                []
            end; *)
-        begin let loc = getLoc from_cfgnode in
+        begin let loc = Node.location from_cfgnode in
           (* exclude line numbers from sv-comp.c and unknown line numbers *)
           if loc.file = programfile && loc.line <> -1 then
             (* TODO: startline disabled because Ultimate doesn't like our line numbers for some reason *)
@@ -336,6 +336,8 @@ struct
       !indices
     in
 
+    let module CfgNode = Node in
+
     let module Node =
     struct
       type t = MyCFG.node * Spec.C.t * int
@@ -418,7 +420,7 @@ struct
 
     let find_invariant (n, c, i) =
       let context: Invariant.context = {
-          scope=getFun n;
+          scope=CfgNode.find_fundec n;
           i;
           lval=None;
           offset=Cil.NoOffset;
@@ -493,10 +495,8 @@ struct
           in
           (module TaskResult:WitnessTaskResult)
         in
-        (* TODO: fix ana.wp if Z3 not compiled *)
         if get_bool "ana.wp" then (
-          (* match Violation.find_path (module ViolationArg) (module ViolationZ3.WP (ViolationArg.Node)) with *)
-          match Violation.find_path (module ViolationArg) (module Violation.UnknownFeasibility (ViolationArg.Node)) with
+          match Violation.find_path (module ViolationArg) (module ViolationZ3.WP (ViolationArg.Node)) with
           | Feasible (module PathArg) ->
             (* TODO: add assumptions *)
             let module TaskResult =
@@ -526,8 +526,8 @@ struct
             (* GobConfig.set_list "ana.activated" (Json.Build.string (Spec.name ()) :: GobConfig.get_list "ana.activated");
             GobConfig.set_list "ana.path_sens" (Json.Build.string (Spec.name ()) :: GobConfig.get_list "ana.path_sens"); *)
             (* TODO: don't append to end; currently done to get observer order to be nice *)
-            GobConfig.set_list "ana.activated" (GobConfig.get_list "ana.activated" @ [Json.Build.string (Spec.name ())]);
-            GobConfig.set_list "ana.path_sens" (GobConfig.get_list "ana.path_sens" @ [Json.Build.string (Spec.name ())]);
+            GobConfig.set_list "ana.activated" (GobConfig.get_list "ana.activated" @ [`String (Spec.name ())]);
+            GobConfig.set_list "ana.path_sens" (GobConfig.get_list "ana.path_sens" @ [`String (Spec.name ())]);
 
             raise Refinement.RestartAnalysis
           | Unknown ->

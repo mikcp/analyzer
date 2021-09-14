@@ -129,8 +129,6 @@ struct
     in
     IO.to_string (List.print ~first:"[" ~last:"]" ~sep:", " String.print) (map domain_name @@ domain_list ())
 
-  let pretty_diff () (x,y) = text "Please override me!"
-
   let printXml f xs =
     let print_one a n (module S : Printable.S) x : unit =
       BatPrintf.fprintf f "<analysis name=\"%s\">\n" (List.assoc n !analyses_table);
@@ -255,7 +253,7 @@ struct
       if not (exists (fun (y',_) -> y=y') xs) then begin
         let xn = assoc x !analyses_table in
         let yn = assoc y !analyses_table in
-        Legacy.Printf.fprintf !Messages.warn_out "Activated analysis '%s' depends on '%s' and '%s' is not activated.\n" xn yn yn;
+        Legacy.Printf.eprintf "Activated analysis '%s' depends on '%s' and '%s' is not activated.\n" xn yn yn;
         raise Exit
       end
     in
@@ -270,12 +268,12 @@ struct
       in
       List.map f
     in
-    let xs = map Json.string @@ get_list "ana.activated" in
+    let xs = get_string_list "ana.activated" in
     let xs = map' (flip assoc_inv !analyses_table) xs in
     base_id := assoc_inv "base" !analyses_table;
     analyses_list := map (fun s -> s, assoc s !analyses_list') xs;
-    path_sens := map' (flip assoc_inv !analyses_table) @@ map Json.string @@ get_list "ana.path_sens";
-    cont_inse := map' (flip assoc_inv !analyses_table) @@ map Json.string @@ get_list "ana.ctx_insens";
+    path_sens := map' (flip assoc_inv !analyses_table) @@ get_string_list "ana.path_sens";
+    cont_inse := map' (flip assoc_inv !analyses_table) @@ get_string_list "ana.ctx_insens";
     dep_list  := map (fun (n,d) -> (n,map' (flip assoc_inv !analyses_table) d)) !dep_list';
     check_deps !analyses_list;
     analyses_list := topo_sort_an !analyses_list;
@@ -298,7 +296,6 @@ struct
     let ys = fold_left one_el [] xs in
     List.rev ys, !dead
 
-  let val_of = identity
   let context x =
     let x = spec_list x in
     map (fun (n,(module S:MCPSpec),d) ->
