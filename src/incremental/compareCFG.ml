@@ -126,7 +126,28 @@ let reexamine f1 f2 (same : biDirectionNodeMap ref) (diffNodes1 : unit NH.t) (mo
   dfs2 NS.empty (FunctionEntry f2) classify_prim_new;
   (NH.to_seq !same.node1to2, NH.to_seq_keys diffNodes1, NH.to_seq_keys diffNodes2)
 
-let compareFun (module CfgOld : CfgForward) (module CfgNew : CfgForward) fun1 fun2 =
+let reexamine2 f1 f2 (same : biDirectionNodeMap ref) (diffNodes1 : unit NH.t) (module CfgOld : CfgForward) (module CfgNew : CfgForward) (module CfgNewPred : CfgBackward) =
+  let entry1 = (FunctionEntry f1) in
+  let entry2 = (FunctionEntry f2) in
+  NH.replace !same.node1to2 entry1 entry2; NH.replace !same.node2to1 entry2 entry1;
+  let rec repeat () =
+    let ls = List.of_seq (NH.to_seq_keys !same.node2to1) in
+    let rec check_nodes_in_same ps n = match ps with
+      | [] -> true
+      | p::ps' -> if not (NH.mem !same.node2to1 p) then (
+          let n1 = NH.find !same.node2to1 n in
+          NH.replace diffNodes1 n1 ();
+          NH.remove !same.node1to2 n1; NH.remove !same.node2to1 n;
+          repeat (); false
+        ) else check_nodes_in_same ps' n in
+    let rec check_predecessors ls = match ls with
+      | [] -> ()
+      | (n2::ls') -> if Node.equal n2 entry2 || check_nodes_in_same (List.map snd (CfgNewPred.prev n2)) n2 then check_predecessors ls' in
+    check_predecessors ls
+  in repeat (); NH.to_seq !same.node1to2, NH.to_seq_keys diffNodes1
+
+let compareFun (module CfgOld : CfgForward) (module CfgNew : CfgForward) (module CfgNewPred : CfgBackward) fun1 fun2 =
   let same, diff = compareCfgs (module CfgOld) (module CfgNew) fun1 fun2 in
-  let unchanged, diffNodes1, diffNodes2 = Stats.time "compare-phase2" (fun () -> reexamine fun1 fun2 same diff (module CfgOld) (module CfgNew)) () in
-  List.of_seq unchanged, List.of_seq diffNodes1, List.of_seq diffNodes2
+  (* let unchanged, diffNodes1, diffNodes2 = Stats.time "compare-phase2" (fun () -> reexamine fun1 fun2 same diff (module CfgOld) (module CfgNew)) () in *)
+  let unchanged, diffNodes1 = Stats.time "compare-phase2-version2" (fun () -> reexamine2 fun1 fun2 same diff (module CfgOld) (module CfgNew) (module CfgNewPred)) () in
+  List.of_seq unchanged, List.of_seq diffNodes1
