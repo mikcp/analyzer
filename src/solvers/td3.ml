@@ -544,8 +544,20 @@ module WP =
         in
 
         (* destabilize which restarts side-effected vars *)
-        let rec destabilize_with_side ?(front=true) x =
+        let rec destabilize_with_side  x =
           if tracing then trace "sol2" "destabilize_with_side %a\n" S.Var.pretty_trace x;
+
+          let destab ~description x m =
+            let w = HM.find_default m x VS.empty in
+            HM.remove m x;
+            VS.iter (fun y ->
+              if tracing then trace "sol2" "destabilize_with_side %a %s %a\n" S.Var.pretty_trace x description S.Var.pretty_trace y;
+              if tracing then trace "sol2" "stable remove %a\n" S.Var.pretty_trace y;
+              HM.remove stable y;
+              HM.remove superstable y;
+              destabilize_with_side y
+            ) w
+          in
 
           (* is side-effected var (global/function entry)? *)
           let w = HM.find_default side_dep x VS.empty in
@@ -555,47 +567,21 @@ module WP =
             (* restart side-effected var *)
             restart_leaf x;
 
-            (* add side_dep to front to prevent them from being aborted *)
-            destabilize_front ~front:true x w;
-
             (* destabilize side dep to redo side effects *)
-            VS.iter (fun y ->
-                if tracing then trace "sol2" "destabilize_with_side %a side_dep %a\n" S.Var.pretty_trace x S.Var.pretty_trace y;
-                if tracing then trace "sol2" "stable remove %a\n" S.Var.pretty_trace y;
-                HM.remove stable y;
-                HM.remove superstable y;
-                destabilize_with_side ~front:false y
-              ) w
+            destab ~description:"side_dep" x side_dep;
           );
 
           (* destabilize eval infl *)
-          let w = HM.find_default infl x VS.empty in
-          HM.replace infl x VS.empty;
-          destabilize_front ~front x w;
-          VS.iter (fun y ->
-              if tracing then trace "sol2" "destabilize_with_side %a infl %a\n" S.Var.pretty_trace x S.Var.pretty_trace y;
-              if tracing then trace "sol2" "stable remove %a\n" S.Var.pretty_trace y;
-              HM.remove stable y;
-              HM.remove superstable y;
-              destabilize_with_side ~front:false y
-            ) w;
+          destab ~description:"infl" x infl;
 
           (* destabilize side infl *)
-          let w = HM.find_default side_infl x VS.empty in
-          HM.remove side_infl x;
-          (* TODO: should this also be conditional on restart_only_globals? right now goes through function entry side effects, but just doesn't restart them *)
-          VS.iter (fun y ->
-              if tracing then trace "sol2" "destabilize_with_side %a side_infl %a\n" S.Var.pretty_trace x S.Var.pretty_trace y;
-              if tracing then trace "sol2" "stable remove %a\n" S.Var.pretty_trace y;
-              HM.remove stable y;
-              HM.remove superstable y;
-              destabilize_with_side ~front:false y
-            ) w
+          destab ~description:"side_infl" x side_infl
         in
 
         destabilize_ref :=
           if restart_sided then
-            destabilize_with_side
+            let f ?front = destabilize_with_side in
+            f
           else
             destabilize_normal;
 
