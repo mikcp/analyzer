@@ -79,6 +79,81 @@ let end_basic_blocks f =
   let thisVisitor = new allBBVisitor in
   visitCilFileSameGlobals thisVisitor f
 
+class loopUnrollingVisitor = object
+  inherit nopCilVisitor
+  method! vstmt s =
+    (* 
+    All the duplicated stmts need to be re-created or the sid will fail, so we create a copy of st, which is physically unequal to it. 
+    A new sid is  computed later (as seen in http://goblint.in.tum.de/assets/goblint-cil/api/Cil.html#TYPEstmt), as long as we perform this copies.
+    *)
+    let newsid st = { st with sid = st.sid } in
+    let rec newsid_stmt st = 
+      let mkb stml = mkBlock (List.map newsid_stmt stml) in
+      match st.skind with
+      | Instr _ -> newsid st
+      | If(e,b1,b2,l1,l2) -> mkStmt(If(e,(mkb b1.bstmts),(mkb b2.bstmts),l1,l2))
+      | Loop(bl,l1,l2,s1,s2) -> 
+        let create_stmt = mkStmt(Loop((mkb bl.bstmts),l1,l2,s1,s2)) in
+        create_stmt.labels <- st.labels;
+        create_stmt
+      | Block(bl) -> mkStmt(Block(mkb bl.bstmts))
+      | Switch(e,bl,stl,l1,l2) -> mkStmt(Switch(e,(mkb bl.bstmts),(List.map newsid_stmt stl),l1,l2))
+      | _ -> newsid st in
+    let create_shallow_copies bl = List.map newsid_stmt bl in
+    match s.skind with
+    | Loop(b, loc, _, _, _) ->
+      let get_unrolling_factor = GobConfig.get_int "exp.unrolling-factor" in
+      (* All unrollings will leave the original loop at the end. The label makes sure it's not unrolled twice.*)
+      let rec is_remainder_loop loop_stmt_labels =
+        match loop_stmt_labels with
+        | [] -> false
+        | Label(lab,_,_)::tl -> 
+          if BatString.starts_with lab "remainder_loop" then true else is_remainder_loop tl
+        | _ -> false in
+      (* Because this is executed before preparedCFG, there are still Breaks instead of Gotos.*)
+      (* We need to transform them so we can replicate the loop's body outside of the loop.*)
+      let break_stmt = mkStmt (Instr []) in
+      break_stmt.labels <- [Label(Cil.freshLabel "unroll_while_break",loc,false)] ;
+      let continue_stmt = mkStmt (Instr []) in
+      continue_stmt.labels <- [Label(Cil.freshLabel "unroll_while_continue",loc,false)] ;
+      let rec rm_breaks_st st = 
+        let rm_breaks_st_list stl = mkBlock (List.map rm_breaks_st stl) in
+        match st.skind with
+        | Break(l) -> mkStmt (Goto (ref break_stmt, loc))
+        | Continue(l) -> mkStmt (Goto (ref continue_stmt, loc))
+        | If(e,tb,fb,l1,l2) -> mkStmt (If (e,(rm_breaks_st_list tb.bstmts), (rm_breaks_st_list fb.bstmts),l1,l2))
+        | Block(bl) -> mkStmt (Block (rm_breaks_st_list bl.bstmts))
+        |Switch(e,bl,stl,l1,l2) -> mkStmt (Switch (e, (rm_breaks_st_list bl.bstmts), (List.map rm_breaks_st stl),l1, l2))
+        | _ -> st in
+      let body = List.map rm_breaks_st b.bstmts in
+      (* Prepare remainder loop for unrolling*)
+      let prepare_remainder_loop st_loop loc_loop = 
+        st_loop.labels <- (Label(Cil.freshLabel "remainder_loop", loc_loop, false))::st_loop.labels;
+        mkStmt (Block (mkBlock([continue_stmt;st_loop]))) in
+      (* Unrolling *)
+      let rec unroll sl factor =
+        match factor with
+        |0-> sl
+        |_ ->
+          let duplicate_body bd = create_shallow_copies bd in
+          let x = (duplicate_body body) @ sl in
+          unroll x (factor-1) in
+      let unroll_helper st = 
+        let x = unroll [(prepare_remainder_loop st loc)] get_unrolling_factor in
+        mkStmt (Block (mkBlock (x @ [break_stmt]))) in
+      let is_loop_unrollable s = 
+        if is_remainder_loop s.labels then false
+        else true in
+      let check_type_loop =
+        if is_loop_unrollable s then ChangeDoChildrenPost ((unroll_helper s), fun x -> x)
+        else  DoChildren in
+      check_type_loop
+    | _ -> DoChildren
+end
+
+let loop_unrolling f =
+  let thisVisitor = new loopUnrollingVisitor in
+  visitCilFileSameGlobals thisVisitor f
 
 let visitors = ref []
 let register_preprocess name visitor_fun =
@@ -93,6 +168,7 @@ let do_preprocess ast =
   iterGlobals ast (function GFun (fd,_) -> List.iter (f fd) !visitors | _ -> ())
 
 let createCFG (fileAST: file) =
+  if (get_int "exp.unrolling-factor")>0 then loop_unrolling fileAST;
   (* The analyzer keeps values only for blocks. So if you want a value for every program point, each instruction      *)
   (* needs to be in its own block. end_basic_blocks does that.                                                        *)
   (* After adding support for VLAs, there are new VarDecl instructions at the point where a variable was declared and *)
